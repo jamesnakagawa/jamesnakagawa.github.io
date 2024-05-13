@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Three.js + WebGPU experiment</title>
+    <style>
+      body {
+        margin: 0;
+        background: black;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+      }
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@v0.164.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@v0.164.0/examples/jsm/",
+          "lilGui": "https://cdn.jsdelivr.net/npm/lil-gui@0.18.1/+esm",
+          "lib": "/webgpu_lib.js",
+          "main": "/webgpu_main.js",
+          "wgpu": "/wgpu.js"
+        }
+      }
+    </script>
+    <script type="module">
+      import * as THREE from "three";
+
+      const R = 0.1;
+      const NUM_SEEDS = 12;
+      const LONG_SEGMENTS_PHASE = 25;
+      const SHORT_SEGMENTS_PHASE = 300;
+      const ELASTIC_FORCE_PHASE_1 = 500;
+      const ELASTIC_FORCE_PHASE_2 = 50;
+      const FORCE_VECTOR_STEP = 0.0001;
+      const ROTATION_PER_FRAME = Math.PI / 1000;
+      const MARGIN = -0.2;
+
+      // Setup camera
+      const aspect = 1;
+      const MARGIN_P1 = MARGIN + 1;
+      const camera = new THREE.OrthographicCamera(
+        -MARGIN_P1 * aspect,
+        MARGIN_P1 * aspect,
+        -MARGIN_P1,
+        MARGIN_P1,
+        0.1,
+        10000
+      );
+      camera.position.z = 5;
+      camera.position.x = 5;
+      camera.lookAt(0, 0, 0);
+
+      // const sphereMaterial = new THREE.MeshStandardMaterial();
+      // sphereMaterial.transparent = true;
+      // sphereMaterial.opacity = 0.1;
+      // const geometry = new THREE.SphereGeometry(1, 100, 100);
+      // const worldSphere = new THREE.Mesh(geometry, sphereMaterial);
+
+      let seeds = [];
+
+      function randomRotation() {
+        const q = new THREE.Quaternion(
+          Math.random() - 0.5,
+          Math.random() - 0.5,
+          Math.random() - 0.5,
+          Math.random() - 0.5
+        );
+        return q.normalize();
+      }
+      function split(line, point) {
+        return [
+          new THREE.Line3(line.start, point),
+          new THREE.Line3(point, line.end),
+        ];
+      }
+
+      // function to be bound
+      function pull() {
+        this.forceVector = this.connected
+          .map((pt) => pt.clone().sub(this.point))
+          .filter((pt) => pt.length() > 0.001)
+          .reduce((acc, cur) => acc.add(cur.normalize()), new THREE.Vector3())
+          .normalize()
+          .multiplyScalar(FORCE_VECTOR_STEP);
+      }
+      function applyForce() {
+        this.point.add(this.forceVector);
+        this.splits[0].end.add(this.forceVector);
+        this.splits[1].start.add(this.forceVector);
+      }
+
+      // subdivide segments
+      const raycaster = new THREE.Raycaster();
+      const planeMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+      const planeGeo = new THREE.PlaneGeometry(50, 50);
+      const plane = new THREE.Mesh(planeGeo, planeMat);
+      const nodes = [];
+
+      function addSegment(r, depth = 0) {
+        const dir = randomRotation();
+        const p = new THREE.Vector3(0, 0, Math.random()).applyQuaternion(dir);
+        plane.applyQuaternion(dir);
+        plane.position.copy(p);
+        plane.updateMatrixWorld();
+
+        let intersections = [];
+        for (let j = 0; j < seeds.length; j++) {
+          const seed = seeds[j];
+          const ray = new THREE.Vector3().subVectors(seed.end, seed.start);
+          raycaster.set(seed.start, ray);
+          raycaster.far = ray.length();
+          const [result] = raycaster.intersectObject(plane, false);
+          if (result?.point.clone().distanceTo(p) < r) {
+            intersections.push({ point: result.point, line: seed });
+          }
+        }
+
+        if (intersections.length <= 1) {
+          if (depth < 50) {
+            addSegment(r, depth + 1);
+          }
+          return;
+        }
+
+        const firstIndex = Math.floor(
+          Math.random() * (intersections.length - 1)
+        );
+        const [ix1, ix2] = intersections.slice(firstIndex);
+
+        const newLine = new THREE.Line3(ix1.point, ix2.point);
+        seeds.push(newLine);
+
+        const splitLine1 = split(ix1.line, ix1.point);
+        seeds.splice(seeds.indexOf(ix1.line), 1, ...splitLine1);
+
+        nodes.push({
+          point: ix1.point,
+          connected: [ix1.line.start, ix1.line.end, ix2.point],
+          splits: splitLine1,
+        });
+        const splitLine2 = split(ix2.line, ix2.point);
+        seeds.splice(seeds.indexOf(ix2.line), 1, ...splitLine2);
+        nodes.push({
+          point: ix2.point,
+          connected: [ix2.line.start, ix2.line.end, ix1.point],
+          splits: splitLine2,
+        });
+      }
+
+      // const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
+      // lineMaterial.opacity = 0.3;
+      // lineMaterial.transparent = true;
+
+      function run() {
+        // group.clear();
+
+        seeds.length = 0;
+        nodes.length = 0;
+
+        for (let i = 0; i < NUM_SEEDS; i++) {
+          const pt1 = new THREE.Vector3().randomDirection();
+          const pt2 = new THREE.Vector3().randomDirection();
+          const line = new THREE.Line3(pt1, pt2);
+          seeds.push(line);
+        }
+
+        for (let i = 0; i < LONG_SEGMENTS_PHASE; i++) {
+          addSegment(1);
+        }
+
+        for (let i = 0; i < SHORT_SEGMENTS_PHASE; i++) {
+          addSegment(R);
+        }
+
+        for (let i = 0; i < ELASTIC_FORCE_PHASE_1; i++) {
+          if (Math.random() > 0.8) addSegment(R);
+          for (let node of nodes) pull.call(node);
+          for (let node of nodes) applyForce.call(node);
+        }
+
+        for (let i = 0; i < ELASTIC_FORCE_PHASE_2; i++) {
+          for (let node of nodes) pull.call(node);
+          for (let node of nodes) applyForce.call(node);
+        }
+
+        // for (let seed of seeds) {
+        //   const points = [seed.start, seed.end];
+        //   const geometry = new THREE.BufferGeometry().setFromPoints(points);
+        //   const line = new THREE.Line(geometry, lineMaterial);
+
+        //   group.add(line);
+        // }
+      }
+      run();
+
+      import { setupWebGPU } from "wgpu";
+      import lilGui from "lilGui";
+
+      /////////////////////////////////////////////////////////
+      // Settings
+      const S = {
+        width: 720,
+        height: 720,
+        frame: 0,
+      };
+
+      /////////////////////////////////////////////////////////
+      // Helper functions
+
+      const initColorBuffer = (wgpu) => {
+        const count = S.width * S.height;
+        const stride = 4;
+        const colors = new Float32Array(count * stride);
+        for (let i = 0; i < count; i++) {
+          colors[i * stride + 0] = 0;
+          colors[i * stride + 1] = 0;
+          colors[i * stride + 2] = 0;
+          colors[i * stride + 3] = 1;
+        }
+        const buffer = wgpu.createAndSetBuffer(
+          colors,
+          GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC
+        );
+        return buffer;
+      };
+
+      const uniforms = new Float32Array([S.width, S.height, 3, 0]);
+      const initUniformBuffer = (wgpu) => {
+        return wgpu.createAndSetBuffer(
+          uniforms,
+          GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        );
+      };
+
+      const dofSettings = {
+        dofE: 1.1,
+        dofF: camera.position.length(),
+        dofM: 0.2,
+        dofI: 10_000,
+        dofO: 0.04,
+      };
+
+      const initDofBuffer = (wgpu) => {
+        // Allocate and set
+        const dofUniforms = new Float32Array([
+          dofSettings.dofE,
+          dofSettings.dofF,
+          dofSettings.dofM,
+          dofSettings.dofI,
+          dofSettings.dofO,
+        ]);
+
+        const buffer = wgpu.createAndSetBuffer(
+          dofUniforms,
+          GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        );
+        return buffer;
+      };
+
+      const initCameraBuffer = (wgpu) => {
+        // Allocate and set
+        const cameraUniforms = new Float32Array([
+          ...camera.projectionMatrix.toArray(),
+          ...camera.matrixWorldInverse.toArray(),
+          ...camera.position.toArray(),
+          0,
+        ]);
+
+        return wgpu.createAndSetBuffer(
+          cameraUniforms,
+          GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+        );
+      };
+
+      const initLinesBuffer = (wgpu) => {
+        // Define initial content
+        let stride = 8;
+        const lines = new Float32Array(seeds.length * stride);
+        for (let i = 0; i < seeds.length; i++) {
+          lines.set(
+            seeds[i].start
+              .toArray()
+              .concat(1)
+              .concat(seeds[i].end.toArray())
+              .concat(1),
+            stride * i
+          );
+        }
+
+        return wgpu.createAndSetBuffer(
+          new Float32Array(lines),
+          GPUBufferUsage.STORAGE
+        );
+      };
+
+      const wgpu = await setupWebGPU(S.width, S.height);
+
+      //////////////
+      // GPU Memory Resources
+      const colorBuffer = initColorBuffer(wgpu);
+      const uniformBuffer = initUniformBuffer(wgpu);
+      const dofBuffer = initDofBuffer(wgpu);
+      const cameraBuffer = initCameraBuffer(wgpu);
+      const linesBuffer = initLinesBuffer(wgpu);
+      const outTexture = wgpu.createTexture(S.width, S.height);
+      const dlaTexWrite = wgpu.createTexture(S.width, S.height);
+      const visibility = GPUShaderStage.COMPUTE;
+
+      //////////////
+      // Dof pipeline
+      const dofBufferLayout = wgpu.createBindGroupLayout({
+        entries: [
+          { visibility, binding: 0, buffer: { type: "uniform" } },
+          { visibility, binding: 1, buffer: { type: "storage" } },
+          { visibility, binding: 2, buffer: { type: "uniform" } },
+          { visibility, binding: 3, buffer: { type: "uniform" } },
+          { visibility, binding: 4, buffer: { type: "storage" } },
+        ],
+      });
+      const dof = await wgpu.createComputePipeline(
+        "dof.wgsl",
+        "dof",
+        dofBufferLayout
+      );
+      const dofBindGroup = await wgpu.createBindGroup({
+        pipeline: dof,
+        group: 0,
+        bindings: [
+          uniformBuffer,
+          colorBuffer,
+          dofBuffer,
+          cameraBuffer,
+          linesBuffer,
+        ],
+      });
+
+      const copyBufferLayout = wgpu.createBindGroupLayout({
+        entries: [
+          { visibility, binding: 0, buffer: { type: "uniform" } },
+          { visibility, binding: 1, buffer: { type: "storage" } },
+          {
+            visibility,
+            binding: 2,
+            storageTexture: { format: "rgba8unorm" },
+          },
+        ],
+      });
+      const copy = await wgpu.createComputePipeline(
+        "dof.wgsl",
+        "copy",
+        copyBufferLayout
+      );
+      const outTextureView = outTexture.createView();
+      const copyBindGroup = await wgpu.createBindGroup({
+        pipeline: copy,
+        group: 0,
+        bindings: [uniformBuffer, colorBuffer, outTextureView],
+      });
+
+      const resetBufferLayout = wgpu.createBindGroupLayout({
+        entries: [
+          { visibility, binding: 0, buffer: { type: "uniform" } },
+          { visibility, binding: 1, buffer: { type: "storage" } },
+        ],
+      });
+      const reset = await wgpu.createComputePipeline(
+        "dof.wgsl",
+        "reset",
+        resetBufferLayout
+      );
+      const resetBindGroup = await wgpu.createBindGroup({
+        pipeline: reset,
+        group: 0,
+        bindings: [uniformBuffer, colorBuffer],
+      });
+
+      //////////////
+      // Set up drawing texture to screen
+      const dispatchRenderPass = await wgpu.drawTextureToCanvasPass(outTexture);
+
+      const step = new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(1, 0, 0),
+        new THREE.Vector3(
+          Math.cos(ROTATION_PER_FRAME),
+          0,
+          -Math.sin(ROTATION_PER_FRAME)
+        )
+      );
+
+      //////////////
+      // Draw loop
+      const draw = () => {
+        const encoder = wgpu.device.createCommandEncoder();
+
+        wgpu.dispatchComputePass({
+          pipeline: reset, // instructions
+          bindGroup: resetBindGroup, // map
+          workGroups: [Math.ceil(S.width / 16), Math.ceil(S.height / 16), 1], // workers
+          encoder: encoder,
+        });
+
+        wgpu.dispatchComputePass({
+          pipeline: dof, // instructions
+          bindGroup: dofBindGroup, // map
+          workGroups: [Math.ceil(seeds.length / 64), 1, 1], // workers
+          encoder: encoder,
+        });
+
+        // copy from buffer to image (can't use copybuffertotex b/c its 8bit)
+        wgpu.dispatchComputePass({
+          pipeline: copy, // instructions
+          bindGroup: copyBindGroup, // map
+          workGroups: [Math.ceil(S.width / 16), Math.ceil(S.height / 16), 1], // workers
+          encoder: encoder,
+        });
+
+        dispatchRenderPass(encoder);
+        // GO!
+        wgpu.device.queue.submit([encoder.finish()]);
+
+        uniforms[3]++; // update frame
+        wgpu.device.queue.writeBuffer(uniformBuffer, 0, uniforms);
+
+        const dofUniforms = new Float32Array([
+          dofSettings.dofE,
+          dofSettings.dofF,
+          dofSettings.dofM,
+          dofSettings.dofI,
+          dofSettings.dofO,
+        ]);
+        wgpu.device.queue.writeBuffer(dofBuffer, 0, dofUniforms);
+
+        camera.position.applyQuaternion(step);
+        camera.lookAt(0, 0, 0);
+        camera.updateMatrixWorld();
+
+        wgpu.device.queue.writeBuffer(
+          cameraBuffer,
+          4 * 16,
+          new Float32Array(
+            camera.matrixWorldInverse
+              .toArray()
+              .concat(camera.position.toArray())
+              .concat(0)
+          )
+        );
+
+        requestAnimationFrame(draw);
+      };
+      draw();
+
+      let gui = new lilGui();
+      gui
+        .add(dofSettings, "dofF")
+        .min(5)
+        .max(10)
+        .step(0.01)
+        .name("Focus depth");
+      gui
+        .add(dofSettings, "dofE")
+        .min(0)
+        .max(4)
+        .step(0.01)
+        .name("Blur exponent");
+      gui.add(dofSettings, "dofM").min(0).max(2).step(0.01).name("Blur radius");
+      gui
+        .add(dofSettings, "dofI")
+        .min(0)
+        .max(15_000)
+        .step(500)
+        .name("# of samples");
+      gui
+        .add(dofSettings, "dofO")
+        .min(0)
+        .max(0.1)
+        .step(0.001)
+        .name("Brightness per sample");
+    </script>
+  </body>
+</html>
