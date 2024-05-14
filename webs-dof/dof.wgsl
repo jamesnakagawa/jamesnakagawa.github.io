@@ -6,19 +6,17 @@ fn random(n: u32) -> f32 {
     return f32(h) / f32(0xffffffff);
 }
 
-fn randVec2(seed: u32) -> vec2f {
-  return vec2(random(seed), random(seed + 1));
+fn normalRandom(n: u32) -> f32 {
+  // box muller algorithm
+  let u1 = random(n);
+  let u2 = random(n + 1);
+  let rSquared = -2.0 * log(u1);
+  let theta = 2.0 * 3.141592654 * u2;
+  return sqrt(rSquared) * cos(theta);
 }
 
-fn rndSphere(s: u32, radius: f32) -> vec3f {
-  var r = radius * sqrt(random(s + 4));
-  var theta = random(s + 2) * 2 * 3.141592654;
-  var upsilon = random(s + 3) * 2 * 3.141592654;
-  var cosu = cos(upsilon);
-  var sinu = sin(upsilon);
-  var circ = vec3(r * cos(theta), r * sin(theta), 0);
-  var zrot = mat3x3f(1.0, 0, 0, 0, cosu, -sinu, 0, sinu, cosu);
-  return zrot * circ;
+fn rndCircle(s: u32, r: f32) -> vec2f {
+  return vec2(r * normalRandom(s), r * normalRandom(s + 1));
 }
 
 fn lerp(start: vec3f, end: vec3f, i: f32) -> vec3f {
@@ -29,6 +27,12 @@ fn lerp(start: vec3f, end: vec3f, i: f32) -> vec3f {
 
 fn index(coords : vec2i) -> i32 {
   return coords.x + coords.y * i32(params.dimensions.x);
+}
+
+fn hsvToRgb(c: vec3f) -> vec3f {
+  let K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+  let p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+  return c.z * mix(K.xxx, clamp(p - K.xxx, vec3f(), vec3f(1.0)), c.y);
 }
 
 struct Params {
@@ -43,11 +47,15 @@ struct Params {
   var<storage, read_write> colorBuffer : array<vec4f>;
 
 struct dofSettings {
-  dofE : f32,
-  dofF : f32,
-  dofM : f32,
-  dofI : f32,
-  dofO : f32,
+  e : f32,
+  f : f32,
+  m : f32,
+  i : f32,
+  o : f32,
+  hs: f32,
+  he: f32,
+  ss: f32,
+  se: f32,
 }
 
 @group(0) @binding(2)
@@ -73,21 +81,36 @@ struct lineStruct {
 @compute @workgroup_size(64)
 fn dof(@builtin(global_invocation_id) id: vec3u) {
   let seed = u32(params.frame) + id.x;
+  let focusWave = dofs.f + sin(params.frame / 300) * 0.3;
   // https://inconvergent.net/2019/depth-of-field/
   var line = linesBuffer[id.x];
   var delta = line.end - line.start;
-  var iterations = u32(length(delta) * dofs.dofI);
+  var iterations = u32(length(delta) * dofs.i);
 
   for (var i = 0u; i < iterations; i++) {
     let lerped = lerp(line.start.xyz, line.end.xyz, random(seed + i));
     let cameraDistance = distance(camera.position, lerped);
-    let radius = dofs.dofM * pow(abs(dofs.dofF - cameraDistance), dofs.dofE);
-    let newPos = vec4f(lerped + rndSphere(seed + i, radius), 1.0);
+    let radius = dofs.m * pow(abs(focusWave - cameraDistance), dofs.e);
 
     // with orthographic camera, no z-divide is needed
-    let projected = camera.projectionMat * camera.worldMatInv * newPos;
-    let coord = (projected.xy + vec2f(1.0, 1.0)) / 2.0 * params.dimensions;
-    colorBuffer[index(vec2i(coord))] += vec4f(vec3f(dofs.dofO), 1.0);
+    let projected = camera.projectionMat * camera.worldMatInv * vec4(lerped, 1.0);
+    let coord = (projected.xy + vec2f(1.0)) / 2.0;
+    let rndVec2 = rndCircle(seed + i, radius);
+    let newPos = (coord + rndVec2) * params.dimensions.x;
+    let pDir = normalize(projected.xy);
+    let x = pDir.x * rndVec2.y - pDir.y * rndVec2.x; // cross product
+    let rr = pow(abs(radius) / dofs.hs, dofs.he);
+
+    var hueStart = 0.833;
+    if (x < 0) {
+      hueStart = 0.5;
+    }
+
+    let hue = clamp(hueStart + rr, 0.0, 1.0);
+    let sat = clamp(pow(abs(x) / dofs.ss, dofs.se), 0.0, 1.0);
+    let rgb = hsvToRgb(vec3(hue, sat, dofs.o));
+
+    colorBuffer[index(vec2i(newPos))] += vec4f(rgb, 1.0);
   }
 }
 

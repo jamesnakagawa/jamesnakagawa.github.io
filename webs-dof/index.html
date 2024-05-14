@@ -242,11 +242,15 @@
       };
 
       const dofSettings = {
-        dofE: 1.1,
-        dofF: camera.position.length(),
+        dofE: 1.8,
+        dofF: 7.2,
         dofM: 0.2,
         dofI: 10_000,
         dofO: 0.04,
+        dofHS: 0.5,
+        dofHE: 2,
+        dofSS: 0.5,
+        dofSE: 0.5,
       };
 
       const initDofBuffer = (wgpu) => {
@@ -257,6 +261,10 @@
           dofSettings.dofM,
           dofSettings.dofI,
           dofSettings.dofO,
+          dofSettings.dofHS,
+          dofSettings.dofHE,
+          dofSettings.dofSS,
+          dofSettings.dofSE,
         ]);
 
         const buffer = wgpu.createAndSetBuffer(
@@ -427,7 +435,7 @@
         // GO!
         wgpu.device.queue.submit([encoder.finish()]);
 
-        uniforms[3]++; // update frame
+        uniforms[2]++; // update frame
         wgpu.device.queue.writeBuffer(uniformBuffer, 0, uniforms);
 
         const dofUniforms = new Float32Array([
@@ -436,6 +444,10 @@
           dofSettings.dofM,
           dofSettings.dofI,
           dofSettings.dofO,
+          dofSettings.dofHS,
+          dofSettings.dofHE,
+          dofSettings.dofSS,
+          dofSettings.dofSE,
         ]);
         wgpu.device.queue.writeBuffer(dofBuffer, 0, dofUniforms);
 
