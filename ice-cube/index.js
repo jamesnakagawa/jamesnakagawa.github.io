@@ -34,7 +34,11 @@ const fShader = `
   varying vec3 worldNormal;
   varying vec3 eyeVector;
 
-  #define LOOP 10
+  #define LOOP 20
+
+  vec3 diagonal(mat3 matrix) {
+    return vec3(matrix[0][0], matrix[1][1], matrix[2][2]);
+  }
   
   vec3 sat(vec3 rgb, float intensity) {
     vec3 L = vec3(0.2125, 0.7154, 0.0721);
@@ -44,9 +48,9 @@ const fShader = `
 
   float fresnel() {
     float fresnelFactor = abs(dot(eyeVector, worldNormal));
-    float inversefresnelFactor = 1.0 - fresnelFactor;
+    float inverseFresnelFactor = 1.0 - fresnelFactor;
 
-    return pow(inversefresnelFactor, u_fresnel_exp);
+    return pow(inverseFresnelFactor, u_fresnel_exp);
   }
 
   float specular() {
@@ -64,48 +68,50 @@ const fShader = `
   
   void main() {
     vec3 color = vec3(0.0);
-
     vec2 uv = gl_FragCoord.xy / u_resolution;
-    vec3 normal = worldNormal;
+
+    mat3 invertMixColor = mat3(-1.0, 2.0, 2.0, 2.0, -1.0, 2.0, 2.0, 2.0, -1.0) / 3.0;
+    vec3 slideOffset = vec3(1.0, 2.0, 3.0);
+    vec3 slideOffset2 = vec3(2.5, 1.0, 1.0);
+
+    mat3 refractRGB = mat3(
+      refract(eyeVector, worldNormal, u_dir / u_incidence1.x),
+      refract(eyeVector, worldNormal, u_dir / u_incidence1.y),
+      refract(eyeVector, worldNormal, u_dir / u_incidence1.z)
+    );
+    mat3 refractCMY = mat3(
+      refract(eyeVector, worldNormal, u_dir / u_incidence2.x),
+      refract(eyeVector, worldNormal, u_dir / u_incidence2.y),
+      refract(eyeVector, worldNormal, u_dir / u_incidence2.z)
+    );
 
     #pragma unroll_loop_start
     for ( int i = 0; i < LOOP; i ++ ) {
       float slide = float(i) / float(LOOP) * 0.1;
-      vec3 slideOffset1 = vec3(1.0, 2.0, 3.0);
-      vec3 slideOffset2 = vec3(1.0, 2.5, 1.0);
-      vec3 refractFactor1 = ((slideOffset1 * slide) + u_refract_power) * u_chromatic_aberration;
-      vec3 refractFactor2 = ((slideOffset2 * slide) + u_refract_power) * u_chromatic_aberration;
+      vec3 rFactorRGB = ((slideOffset * slide) + u_refract_power) * u_chromatic_aberration;
+      vec3 rFactorCMY = ((slideOffset2 * slide) + u_refract_power) * u_chromatic_aberration;
 
-      vec3 refractVecR = refract(eyeVector, normal, u_dir / u_incidence1.x);
-      vec3 refractVecG = refract(eyeVector, normal, u_dir / u_incidence1.y);
-      vec3 refractVecB = refract(eyeVector, normal, u_dir / u_incidence1.z);
+      vec3 rgb = 
+        diagonal(
+          mat3(
+            texture(u_texture, uv + refractRGB[0].xy * rFactorRGB.r),
+            texture(u_texture, uv + refractRGB[1].xy * rFactorRGB.g),
+            texture(u_texture, uv + refractRGB[2].xy * rFactorRGB.b)
+          )
+        );
 
-      vec3 refractVecC = refract(eyeVector, normal, u_dir / u_incidence2.x);
-      vec3 refractVecM = refract(eyeVector, normal, u_dir / u_incidence2.y);
-      vec3 refractVecY = refract(eyeVector, normal, u_dir / u_incidence2.z);
+      vec3 rgbFromCMY = 
+        invertMixColor *
+        diagonal(
+          invertMixColor * 
+          mat3(
+            texture(u_texture, uv + refractCMY[0].xy * rFactorCMY.x).rgb,
+            texture(u_texture, uv + refractCMY[1].xy * rFactorCMY.y).rgb,
+            texture(u_texture, uv + refractCMY[2].xy * rFactorCMY.z).rgb
+          )
+        );
 
-      float r = texture2D(u_texture, uv + refractVecR.xy * refractFactor1.x).x * 0.5;
-
-      float y = (texture2D(u_texture, uv + refractVecY.xy * refractFactor2.x).x * 2.0 +
-                  texture2D(u_texture, uv + refractVecY.xy * refractFactor2.x).y * 2.0 -
-                  texture2D(u_texture, uv + refractVecY.xy * refractFactor2.x).z) / 6.0;
-
-      float g = texture2D(u_texture, uv + refractVecG.xy * refractFactor1.y).y * 0.5;
-
-      float c = (texture2D(u_texture, uv + refractVecC.xy * refractFactor2.y).y * 2.0 +
-                  texture2D(u_texture, uv + refractVecC.xy * refractFactor2.y).z * 2.0 -
-                  texture2D(u_texture, uv + refractVecC.xy * refractFactor2.y).x) / 6.0;
-            
-      float b = texture2D(u_texture, uv + refractVecB.xy * refractFactor1.z).z * 0.5;
-
-      float p = (texture2D(u_texture, uv + refractVecM.xy * refractFactor2.z).z * 2.0 +
-                  texture2D(u_texture, uv + refractVecM.xy * refractFactor2.z).x * 2.0 -
-                  texture2D(u_texture, uv + refractVecM.xy * refractFactor2.z).y) / 6.0;
-
-      color.r += r + (2.0*p + 2.0*y - c)/3.0;
-      color.g += g + (2.0*y + 2.0*c - p)/3.0;
-      color.b += b + (2.0*c + 2.0*p - y)/3.0;
-      
+      color += (rgb + rgbFromCMY) / 2.0;
       color = sat(color, u_saturation);
     }
     #pragma unroll_loop_send
@@ -115,12 +121,6 @@ const fShader = `
     color.rgb += vec3(fresnel());
 
     gl_FragColor = vec4(color.rgb, 1.0);
-
-
-    // vec2 uv = gl_FragCoord.xy / u_resolution.xy;
-    // vec4 color = texture2D(u_texture, uv);
-
-    // gl_FragColor = color;
   }
 `;
 
@@ -161,9 +161,9 @@ const uniforms = {
   u_texture: { value: null },
   u_incidence1: { value: { x: 1.15, y: 1.16, z: 1.18 } },
   u_incidence2: { value: { x: 1.22, y: 1.22, z: 1.22 } },
-  u_chromatic_aberration: { value: 0.3 },
+  u_chromatic_aberration: { value: 0.2 },
   u_refract_power: { value: 0.4 },
-  u_saturation: { value: 1.08 },
+  u_saturation: { value: 1.07 },
   u_light: { value: new THREE.Vector3(1, -1, -1).normalize() },
   u_diffuseness: { value: 0.2 },
   u_shininess: { value: 40 },
@@ -183,7 +183,7 @@ class MainScene extends Scene3D {
     this.bgTexture = new THREE.TextureLoader().load("assets/dots.png");
     this.bgTexture.mapping = THREE.EquirectangularReflectionMapping;
 
-    const prismGeometry = createRoundedBox(3, 3, 10, 0.5, 12);
+    const prismGeometry = createRoundedBox(3, 3, 10, 0.5, 36);
     const glass = (this.glass = new THREE.ShaderMaterial({
       vertexShader: vShader,
       fragmentShader: fShader,
@@ -311,47 +311,46 @@ class MainScene extends Scene3D {
   gui() {
     let gui = new lilGui();
 
-    gui
-      .add(uniforms.u_chromatic_aberration, "value")
-      .min(0)
-      .max(1)
-      .step(0.01)
-      .name("Chromatic aberration");
-    gui
-      .add(uniforms.u_refract_power, "value")
-      .min(0)
-      .max(1)
-      .step(0.01)
-      .name("Refract exponent");
-    gui
-      .add(uniforms.u_saturation, "value")
-      .min(0.8)
-      .max(1.2)
-      .step(0.01)
-      .name("Saturation gain/loss");
-    gui
-      .add(uniforms.u_diffuseness, "value")
-      .min(0)
-      .max(1)
-      .step(0.1)
-      .name("Diffuseness");
-    gui
-      .add(uniforms.u_shininess, "value")
-      .min(0)
-      .max(50)
-      .step(1)
-      .name("Shininess");
-    gui
-      .add(uniforms.u_fresnel_exp, "value")
-      .min(0)
-      .max(20)
-      .step(1)
-      .name("Fresnel");
+    let ctrl = gui.add(uniforms.u_chromatic_aberration, "value");
+    ctrl.name("Chromatic aberration");
+    ctrl.min(0).max(1).step(0.01);
+
+    ctrl = gui.add(uniforms.u_refract_power, "value");
+    ctrl.name("Refract exponent");
+    ctrl.min(0).max(1).step(0.01);
+
+    ctrl = gui.add(uniforms.u_saturation, "value");
+    ctrl.name("Saturation gain/loss");
+    ctrl.min(0.8).max(1.2).step(0.01);
+
+    ctrl = gui.add(uniforms.u_diffuseness, "value");
+    ctrl.name("Diffuseness");
+    ctrl.min(0).max(1).step(0.1);
+
+    ctrl = gui.add(uniforms.u_shininess, "value");
+    ctrl.name("Shininess");
+    ctrl.min(0).max(50).step(1);
+
+    ctrl = gui.add(uniforms.u_fresnel_exp, "value");
+    ctrl.name("Fresnel");
+    ctrl.min(0).max(20).step(1);
+
     gui.add(this, "reset").name("Reset");
-    // const uniforms = {
-    //   u_incidence1: { value: { x: 1.15, y: 1.16, z: 1.18 } },
-    //   u_incidence2: { value: { x: 1.22, y: 1.22, z: 1.22 } },
-    // };
+
+    const refraction = gui.addFolder("Refractive indices");
+
+    ctrl = refraction.add(uniforms.u_incidence1.value, "x").name("R");
+    ctrl.min(1).max(1.5).step(0.01);
+    ctrl = refraction.add(uniforms.u_incidence2.value, "z").name("Y");
+    ctrl.min(1).max(1.5).step(0.01);
+    ctrl = refraction.add(uniforms.u_incidence1.value, "y").name("G");
+    ctrl.min(1).max(1.5).step(0.01);
+    ctrl = refraction.add(uniforms.u_incidence2.value, "x").name("C");
+    ctrl.min(1).max(1.5).step(0.01);
+    ctrl = refraction.add(uniforms.u_incidence1.value, "z").name("B");
+    ctrl.min(1).max(1.5).step(0.01);
+    ctrl = refraction.add(uniforms.u_incidence2.value, "y").name("M");
+    ctrl.min(1).max(1.5).step(0.01);
   }
 }
 
