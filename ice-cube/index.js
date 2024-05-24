@@ -1,5 +1,4 @@
 import "enable3d";
-import "ammo";
 import lilGui from "lilGui";
 const { THREE, Scene3D, PhysicsLoader, Project } = ENABLE3D;
 
