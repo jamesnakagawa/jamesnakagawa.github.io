@@ -34,7 +34,7 @@ const fShader = `
   varying vec3 worldNormal;
   varying vec3 eyeVector;
 
-  #define LOOP 20
+  #define LOOP 15
 
   vec3 diagonal(mat3 matrix) {
     return vec3(matrix[0][0], matrix[1][1], matrix[2][2]);
@@ -182,6 +182,7 @@ class MainScene extends Scene3D {
   async init() {
     this.bgTexture = new THREE.TextureLoader().load("assets/dots.png");
     this.bgTexture.mapping = THREE.EquirectangularReflectionMapping;
+    this.scene.background = this.bgTexture;
 
     const prismGeometry = createRoundedBox(3, 3, 10, 0.5, 36);
     const glass = (this.glass = new THREE.ShaderMaterial({
@@ -262,7 +263,6 @@ class MainScene extends Scene3D {
   preRender() {
     uniforms.u_time.value = this.clock.getElapsedTime();
     this.prism.visible = false;
-    this.scene.background = this.bgTexture;
     this.renderer.setRenderTarget(this.bufferTarget1);
     this.renderer.render(this.scene, this.camera);
 
@@ -276,19 +276,19 @@ class MainScene extends Scene3D {
     uniforms.u_dir.value = 1;
     uniforms.u_texture.value = this.bufferTarget2.texture;
     this.glass.side = THREE.FrontSide;
-    this.scene.background = null;
     this.renderer.setRenderTarget(null);
   }
 
   onResize() {
     const w = window.innerWidth;
     const h = window.innerHeight;
-    uniforms.u_resolution.value.x = w * window.devicePixelRatio;
-    uniforms.u_resolution.value.y = h * window.devicePixelRatio;
+    const dpr = window.devicePixelRatio;
+    uniforms.u_resolution.value.x = w * dpr;
+    uniforms.u_resolution.value.y = h * dpr;
     this.renderer.setSize(w, h);
-    this.renderer.setPixelRatio(window.devicePixelRatio);
-    this.bufferTarget1.setSize(w, h);
-    this.bufferTarget2.setSize(w, h);
+    this.renderer.setPixelRatio(dpr);
+    this.bufferTarget1.setSize(w * dpr, h * dpr);
+    this.bufferTarget2.setSize(w * dpr, h * dpr);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
   }
