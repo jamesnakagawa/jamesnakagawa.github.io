@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Three.js + WebGL experiment</title>
+    <style>
+      body {
+        margin: 0;
+        background: black;
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        font: 8pt monospace;
+      }
+      canvas {
+        display: block;
+      }
+      #caption {
+        position: absolute;
+        bottom: 0.5em;
+        width: 100%;
+        text-align: center;
+        display: block;
+        z-index: 100;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@v0.164.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@v0.164.0/examples/jsm/",
+          "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@v0.164.0/examples/jsm/",
+          "lilGui": "https://cdn.jsdelivr.net/npm/lil-gui@0.18.1/+esm",
+          "enable3d": "./enable3d.framework.0.25.4.min.js",
+          "ammo": "./enable3d.ammoPhysics.0.25.4.min.js"
+        }
+      }
+    </script>
+    <script type="module" src="./index.js"></script>
+    <div id="caption">click the prism to throw it. hold for more power</div>
+  </body>
+</html>
